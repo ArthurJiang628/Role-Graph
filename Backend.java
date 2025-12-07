@@ -234,8 +234,11 @@ public class Backend implements BackendInterface {
     }
 
     /**
-     * Standard Dijkstra over adjacency list.
-     */
+ * Runs Dijkstra's shortest-path algorithm over the internal adjacency list.
+ * @param src starting node
+ * @return distance and predecessor maps
+ */
+
     private DijkstraResult dijkstra(String src) {
         DijkstraResult r = new DijkstraResult();
 
@@ -268,9 +271,11 @@ public class Backend implements BackendInterface {
         return r;
     }
 
-    /**
-     * Reconstructs the shortest path from predecessor links.
-     */
+   
+/**
+ * Reconstructs the shortest path from src to dst using predecessor links.
+ * @return list of nodes forming the path, or empty list if unreachable
+ */
     private List<String> reconstruct(Map<String, String> prev,
                                      String src, String dst) {
         LinkedList<String> path = new LinkedList<>();
@@ -289,8 +294,10 @@ public class Backend implements BackendInterface {
     }
 
     /**
-     * Finds weight of edge u -> v or returns +∞ if no such edge exists.
-     */
+ * Returns the weight of the edge u -> v.
+ * If no such edge exists, returns +∞.
+ */
+
     private double weightOf(String u, String v) {
         for (Edge e : adj.getOrDefault(u, List.of()))
             if (e.to.equals(v))
