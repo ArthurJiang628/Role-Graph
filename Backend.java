@@ -20,6 +20,8 @@ import java.util.regex.Pattern;
  */
 public class Backend implements BackendInterface {
 
+    private GraphADT<String, Double> graph; // NEW FIELD
+
     /** Adjacency list: node -> list of edges (to, weight) */
     private final Map<String, List<Edge>> adj = new HashMap<>();
 
