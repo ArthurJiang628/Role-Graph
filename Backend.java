@@ -59,6 +59,15 @@ public class Backend implements BackendInterface {
             String line;
 
             // Regex patterns for parsing DOT syntax
+            // edgePattern extracts edges in the form:
+            //    A -> B [weight=1.5]
+            //    A -- B [label=2.0]
+            // capturing:
+            //   group(1): source node
+//   group(2): edge operator (directed "->" or undirected "--")
+//   group(3): destination node
+//   group(4): attributes (optional)
+
             Pattern edgePat = Pattern.compile(
                 "\\s*([A-Za-z0-9_./-]+)\\s*(->|--)\\s*([A-Za-z0-9_./-]+)\\s*(\\[[^\\]]*\\])?\\s*;?.*"
             );
