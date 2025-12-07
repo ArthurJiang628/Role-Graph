@@ -20,7 +20,7 @@ import java.util.regex.Pattern;
  */
 public class Backend implements BackendInterface {
 
-    private GraphADT<String, Double> graph; // NEW FIELD
+    private GraphADT<String, Double> graph; // NEW FIELD added
 
     /** Adjacency list: node -> list of edges (to, weight) */
     private final Map<String, List<Edge>> adj = new HashMap<>();
@@ -37,9 +37,11 @@ public class Backend implements BackendInterface {
      * If your graders expect a constructor with GraphADT, you can add an
      * overloaded one later without changing this default constructor.
      */
-    public Backend() {
+     public Backend(GraphADT<String, Double> graph) {
+      this.graph = graph;
+}
+
         // nothing to initialize beyond 'adj'
-    }
 
     // ---------------------------------------------------------------------
     // 1) loadGraphData
@@ -49,69 +51,92 @@ public class Backend implements BackendInterface {
      * Pre: filename refers to a readable DOT file.
      * Post: internal graph is cleared and then populated from file contents.
      */
-    @Override
+@Override
     public void loadGraphData(String filename) throws IOException {
-        // Clear existing graph
         adj.clear();
 
         try (BufferedReader br = new BufferedReader(new FileReader(filename))) {
             String line;
-            // Patterns to match edges and optional attributes
-            // Supports:   A -> B [weight=1.5];    or   A -- B [label=2.0];
-            Pattern edgePat = Pattern.compile("\\s*([A-Za-z0-9_./-]+)\\s*(->|--)\\s*([A-Za-z0-9_./-]+)\\s*(\\[[^\\]]*\\])?\\s*;?.*");
-            Pattern nodePat = Pattern.compile("\\s*([A-Za-z0-9_./-]+)\\s*(\\[[^\\]]*\\])?\\s*;\\s*");
-            Pattern weightPat = Pattern.compile(".*(?:weight|label)\\s*=\\s*\"?([0-9]+(?:\\.[0-9]+)?)\"?.*");
+
+            // Regex patterns for parsing DOT syntax
+            Pattern edgePat = Pattern.compile(
+                "\\s*([A-Za-z0-9_./-]+)\\s*(->|--)\\s*([A-Za-z0-9_./-]+)\\s*(\\[[^\\]]*\\])?\\s*;?.*"
+            );
+            Pattern nodePat = Pattern.compile(
+                "\\s*([A-Za-z0-9_./-]+)\\s*(\\[[^\\]]*\\])?\\s*;\\s*"
+            );
+            Pattern weightPat = Pattern.compile(
+                ".*(?:weight|label)\\s*=\\s*\"?([0-9]+(?:\\.[0-9]+)?)\"?.*"
+            );
 
             while ((line = br.readLine()) != null) {
                 line = line.trim();
-                if (line.isEmpty()) continue;
-                if (line.startsWith("//") || line.startsWith("#")) continue;
-                if (line.startsWith("graph") || line.startsWith("digraph") || line.startsWith("{") || line.startsWith("}"))
+
+                // Ignore blank lines, comments, and structural DOT keywords
+                if (line.isEmpty() ||
+                    line.startsWith("//") || line.startsWith("#") ||
+                    line.equals("{") || line.equals("}") ||
+                    line.startsWith("graph") || line.startsWith("digraph"))
                     continue;
 
+                // ---------------------------
+                // Match edge case: A -> B [w]
+                // ---------------------------
                 Matcher em = edgePat.matcher(line);
                 if (em.matches()) {
                     String u = em.group(1);
-                    String op = em.group(2); // -> or --
+                    String op = em.group(2);
                     String v = em.group(3);
                     String attr = em.group(4);
 
+                    // Default weight = 1.0
                     double w = 1.0;
                     if (attr != null) {
                         Matcher wm = weightPat.matcher(attr);
-                        if (wm.matches()) {
-                            w = Double.parseDouble(wm.group(1));
-                        }
+                        if (wm.matches()) w = Double.parseDouble(wm.group(1));
                     }
 
-                    // ensure nodes exist
+                    // Build adjacency list
                     adj.computeIfAbsent(u, k -> new ArrayList<>());
                     adj.computeIfAbsent(v, k -> new ArrayList<>());
-
-                    // add edge(s)
                     adj.get(u).add(new Edge(v, w));
-                    if (op.equals("--")) { // undirected => add reverse
+                    if (op.equals("--"))
                         adj.get(v).add(new Edge(u, w));
+
+                    // Mirror into GraphADT
+                    if (graph != null) {
+                        graph.insertNode(u);
+                        graph.insertNode(v);
+                        graph.insertEdge(u, v, w);
+                        if (op.equals("--"))
+                            graph.insertEdge(v, u, w);
                     }
+
                     continue;
                 }
 
-                // standalone node lines like:   A;   or   A [label="x"];
+                // ---------------------------
+                // Match standalone node case
+                // ---------------------------
                 Matcher nm = nodePat.matcher(line);
                 if (nm.matches()) {
                     String node = nm.group(1);
+
                     adj.computeIfAbsent(node, k -> new ArrayList<>());
+
+                    if (graph != null)
+                        graph.insertNode(node);
                 }
-                // Other lines are ignored (subgraphs, attributes, etc.)
             }
         }
     }
 
-    // ---------------------------------------------------------------------
-    // 2) getListOfAllLocations
-    // ---------------------------------------------------------------------
+    // ===============================================================
+    // Get all nodes
+    // ===============================================================
+
     /**
-     * Return all node names in lexicographic order.
+     * @return list of all nodes in sorted lexicographic order.
      */
     @Override
     public List<String> getListOfAllLocations() {
@@ -120,132 +145,148 @@ public class Backend implements BackendInterface {
         return list;
     }
 
-    // ---------------------------------------------------------------------
-    // 3) findLocationsOnShortestPath
-    // ---------------------------------------------------------------------
+    // ===============================================================
+    // Shortest path (locations)
+    // ===============================================================
+
     /**
-     * Return the sequence of nodes along the shortest path from start to end.
-     * If either node is missing or no path exists, return an empty list.
+     * Computes the shortest path from start to end using internal Dijkstra.
+     * Returns empty list if either node is missing or unreachable.
      */
     @Override
-    public List<String> findLocationsOnShortestPath(String startLocation, String endLocation) {
-        if (!adj.containsKey(startLocation) || !adj.containsKey(endLocation)) return Collections.emptyList();
-        DijkstraResult dj = dijkstra(startLocation);
-        if (!dj.dist.containsKey(endLocation) || Double.isInfinite(dj.dist.get(endLocation))) return Collections.emptyList();
-        return reconstructPath(dj.prev, startLocation, endLocation);
+    public List<String> findLocationsOnShortestPath(String start, String end) {
+        if (!adj.containsKey(start) || !adj.containsKey(end))
+            return Collections.emptyList();
+
+        DijkstraResult dj = dijkstra(start);
+
+        if (!dj.dist.containsKey(end) || Double.isInfinite(dj.dist.get(end)))
+            return Collections.emptyList();
+
+        return reconstruct(dj.prev, start, end);
     }
 
-    // ---------------------------------------------------------------------
-    // 4) findTimesOnShortestPath
-    // ---------------------------------------------------------------------
+    // ===============================================================
+    // Shortest path (weights)
+    // ===============================================================
+
     /**
-     * Return edge-by-edge weights (times) along the shortest path from start to end.
-     * If no path, return empty list.
+     * Returns the list of edge weights along the shortest path.
      */
     @Override
-    public List<Double> findTimesOnShortestPath(String startLocation, String endLocation) {
-        List<String> path = findLocationsOnShortestPath(startLocation, endLocation);
+    public List<Double> findTimesOnShortestPath(String start, String end) {
+        List<String> path = findLocationsOnShortestPath(start, end);
         if (path.isEmpty()) return Collections.emptyList();
+
         List<Double> times = new ArrayList<>();
         for (int i = 0; i + 1 < path.size(); i++) {
-            String u = path.get(i), v = path.get(i + 1);
-            times.add(weightOf(u, v));
+            times.add(weightOf(path.get(i), path.get(i + 1)));
         }
         return times;
     }
 
-    // ---------------------------------------------------------------------
-    // 5) getReachableFromWithin
-    // ---------------------------------------------------------------------
+    // ===============================================================
+    // Reachability
+    // ===============================================================
+
     /**
-     * Return a list of nodes reachable from start within <= travelTime (seconds).
-     * Throws NoSuchElementException if start does not exist.
-     * The returned list is sorted lexicographically (excluding the start itself).
+     * Computes all nodes reachable from start within a given travel time.
      */
     @Override
-    public List<String> getReachableFromWithin(String startLocation, double travelTime) throws NoSuchElementException {
-        if (!adj.containsKey(startLocation)) {
-            throw new NoSuchElementException("Start location does not exist: " + startLocation);
-        }
-        DijkstraResult dj = dijkstra(startLocation);
+    public List<String> getReachableFromWithin(
+            String start, double travelTime) {
+
+        if (!adj.containsKey(start))
+            throw new NoSuchElementException("Start node does not exist");
+
+        DijkstraResult dj = dijkstra(start);
         List<String> out = new ArrayList<>();
-        for (Map.Entry<String, Double> e : dj.dist.entrySet()) {
-            String node = e.getKey();
-            double d = e.getValue();
-            if (!node.equals(startLocation) && d <= travelTime) {
+
+        for (var entry : dj.dist.entrySet()) {
+            String node = entry.getKey();
+            double dist = entry.getValue();
+
+            if (!node.equals(start) && dist <= travelTime)
                 out.add(node);
-            }
         }
+
         Collections.sort(out);
         return out;
     }
 
-    // ==========================
-    // Dijkstra helper machinery
-    // ==========================
+    // ===============================================================
+    // Dijkstra Helpers
+    // ===============================================================
 
-    /** Dijkstra result: distance and predecessor maps */
+    /** Stores distances and predecessors for Dijkstra */
     private static class DijkstraResult {
-        final Map<String, Double> dist = new HashMap<>();
-        final Map<String, String> prev = new HashMap<>();
+        Map<String, Double> dist = new HashMap<>();
+        Map<String, String> prev = new HashMap<>();
     }
 
     /**
-     * Run Dijkstra from a given source on the internal adjacency list.
-     * Returns maps of distances and predecessors.
+     * Standard Dijkstra over adjacency list.
      */
     private DijkstraResult dijkstra(String src) {
         DijkstraResult r = new DijkstraResult();
-        // init distances
-        for (String v : adj.keySet()) r.dist.put(v, Double.POSITIVE_INFINITY);
+
+        for (String v : adj.keySet())
+            r.dist.put(v, Double.POSITIVE_INFINITY);
         r.dist.put(src, 0.0);
 
-        // min-heap on (distance, node)
-        PriorityQueue<String> pq = new PriorityQueue<>(Comparator.comparingDouble(r.dist::get));
+        PriorityQueue<String> pq =
+            new PriorityQueue<>(Comparator.comparingDouble(r.dist::get));
+
         pq.add(src);
 
         while (!pq.isEmpty()) {
             String u = pq.poll();
             double du = r.dist.get(u);
-            // relax edges
-            for (Edge e : adj.getOrDefault(u, Collections.emptyList())) {
-                double cand = du + e.w;
-                Double old = r.dist.get(e.to);
-                if (cand < old) {
-                    r.dist.put(e.to, cand);
+
+            for (Edge e : adj.getOrDefault(u, List.of())) {
+                double nd = du + e.w;
+
+                if (nd < r.dist.get(e.to)) {
+                    r.dist.put(e.to, nd);
                     r.prev.put(e.to, u);
-                    // update pq (remove+add pattern is fine given small inputs)
+
                     pq.remove(e.to);
                     pq.add(e.to);
                 }
             }
         }
+
         return r;
     }
 
     /**
-     * Reconstruct path [src ... dst] using predecessor map.
-     * Returns an empty list if dst is unreachable.
+     * Reconstructs the shortest path from predecessor links.
      */
-    private List<String> reconstructPath(Map<String, String> prev, String src, String dst) {
+    private List<String> reconstruct(Map<String, String> prev,
+                                     String src, String dst) {
         LinkedList<String> path = new LinkedList<>();
         String cur = dst;
+
         while (cur != null) {
             path.addFirst(cur);
             if (cur.equals(src)) break;
             cur = prev.get(cur);
         }
-        if (!path.isEmpty() && path.getFirst().equals(src)) return path;
+
+        if (path.getFirst().equals(src))
+            return path;
+
         return Collections.emptyList();
     }
 
     /**
-     * Get the weight of the edge u->v (or +INF if missing).
+     * Finds weight of edge u -> v or returns +∞ if no such edge exists.
      */
     private double weightOf(String u, String v) {
-        for (Edge e : adj.getOrDefault(u, Collections.emptyList())) {
-            if (e.to.equals(v)) return e.w;
-        }
+        for (Edge e : adj.getOrDefault(u, List.of()))
+            if (e.to.equals(v))
+                return e.w;
+
         return Double.POSITIVE_INFINITY;
     }
 }
